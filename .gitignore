@@ -216,3 +216,14 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+# === Math-Rebuild específico ===
+# Progreso del estudiante — se regenera solo, no se versiona
+data/student_state.json
+
+# Scripts de prueba locales (test_state.py, etc.)
+test_*.py
+
+# PyCharm (descomentado porque no lo queremos en el repo)
+.idea/
