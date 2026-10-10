@@ -1,114 +1,22 @@
-"""
-app.py — MathRebuild v2
-
-Router minimalista:
-  1. Lee los temas registrados en core/registry.py.
-  2. Por cada tema, muestra 3 pestañas: Teoría | Practicar | Mis métricas.
-  3. Guarda cada intento en data/student_state.json (persistente).
-
-Toda la matemática vive en content/*.py.
-Toda la presentación vive en core/ui.py.
-Toda la persistencia vive en core/state.py.
-Este archivo solo ORQUESTA.
-"""
-
-from fractions import Fraction
-
-import streamlit as st
-
-from core import state as S
-from core import ui
-from core import manim_helpers as MH
-from core.registry import listar, buscar, cargar_modulo
-from manim_runner import render_manim_scene
-
-
-# --- Configuración de página (debe ir primero) -------------------------
-st.set_page_config(
-    page_title="MathRebuild",
-    page_icon="🧮",
-    layout="wide",
-)
-
-st.title("🧮 MathRebuild")
-st.caption("Sistema Adaptativo de Reconstrucción Matemática")
-
-
-# --- Sidebar: selector de tema y nivel ---------------------------------
-temas_disponibles = listar()
-
-if not temas_disponibles:
-    st.error(
-        "No hay temas registrados. Revisa `core/registry.py` — "
-        "la lista `TEMAS` está vacía."
-    )
-    st.stop()
-
-opciones_tema = {t.id: f"{t.nombre}  ({t.fase})" for t in temas_disponibles}
-tema_id = st.sidebar.selectbox(
-    "📚 Tema:",
-    options=list(opciones_tema.keys()),
-    format_func=lambda k: opciones_tema[k],
-)
-
-tema_meta = buscar(tema_id)
-modulo = cargar_modulo(tema_id)
-
-if modulo is None:
-    st.error(
-        f"El tema **{tema_meta.nombre}** está registrado pero su módulo "
-        f"`{tema_meta.modulo}` no existe todavía. "
-        f"Crea el archivo y vuelve a intentar."
-    )
-    st.stop()
-
-# Selector de nivel (solo si el tema define niveles)
-niveles = getattr(modulo, "NIVELES", [])
-if niveles:
-    nivel = st.sidebar.selectbox(
-        "🎚️ Nivel:",
-        options=niveles,
-        format_func=lambda n: n.capitalize(),
-    )
-else:
-    nivel = "basico"
-
-st.sidebar.divider()
-st.sidebar.caption(
-    f"Fase: **{tema_meta.fase}**  \n"
-    f"Módulo: `{tema_meta.modulo}`"
-)
-
-# --- Test Manim (temporal, para validar el pipeline) -------------------
-with st.sidebar.expander("🧪 Test Manim"):
-    if st.button("Render demo (Square → Circle)"):
-        with st.spinner("Renderizando… puede tardar 30–60 s"):
-            demo_code = '''
-from manim import *
-
-class Demo(Scene):
-    def construct(self):
-        sq = Square()
-        ci = Circle().set_fill(PINK, opacity=0.5)
-        self.play(Create(sq))
-        self.play(Transform(sq, ci))
-        self.wait(0.5)
-'''
-            video_bytes = render_manim_scene(demo_code, "Demo")
-            if video_bytes:
-                st.success("¡Listo!")
-                st.video(video_bytes)
-            else:
-                st.error("Manim falló. Revisa los logs de Streamlit.")
-
-
-# --- Pestañas ----------------------------------------------------------
-tab_teoria, tab_practicar, tab_metricas = st.tabs(
-    ["📖 Teoría", "🎯 Practicar", "📊 Mis métricas"]
-)
-
-
 # --- TAB 1: Teoría -----------------------------------------------------
+def _anim_for_block(tema_id: str, idx: int, bloque: dict):
+    """
+    Returns (scene_code, scene_class) for a given theory block.
+    Falls back to None if no animation is available.
+    """
+    # --- signos: custom per-block animations ---
+    if tema_id == "signos":
+        if idx == 0:   # ¿Qué es un número negativo?
+            return MH.number_line_scene(value=-3)
+        if idx == 1:   # Sumar dos del mismo signo
+            return MH.two_numbers_scene(a=-3, b=-5, result=-8)
+        if idx == 2:   # Sumar dos de signos opuestos
+            return MH.two_numbers_scene(a=-7, b=4, result=-3)
+
+    # --- fallback: generic number line ---
+    return MH.number_line_scene(value=0)
+
+
 with tab_teoria:
     st.subheader(f"Teoría — {tema_meta.nombre}")
     bloques = modulo.teoria(nivel)
@@ -121,126 +29,22 @@ with tab_teoria:
         if "latex" in b:
             st.latex(b["latex"])
 
-        # --- Botón de animación (opcional por bloque) ---
+        # --- Botón de animación específico por bloque ---
         anim_key = f"anim_teoria_{tema_id}_{nivel}_{idx}"
         if st.button("🎬 Ver animación", key=f"btn_{anim_key}"):
             with st.spinner("Renderizando animación… (30–60 s)"):
-                code, cls = MH.number_line_scene(value=-3)
-                video_bytes = render_manim_scene(code, cls)
-
-            if video_bytes:
-                st.session_state[anim_key] = video_bytes
-            else:
-                st.error("No se pudo renderizar la animación. Revisa los logs.")
+                result = _anim_for_block(tema_id, idx, b)
+                if result is None:
+                    st.warning("No hay animación definida para este bloque.")
+                else:
+                    code, cls = result
+                    video_bytes = render_manim_scene(code, cls)
+                    if video_bytes:
+                        st.session_state[anim_key] = video_bytes
+                    else:
+                        st.error("No se pudo renderizar la animación.")
 
         if anim_key in st.session_state:
             st.video(st.session_state[anim_key])
 
         st.divider()
-
-
-# --- TAB 2: Practicar --------------------------------------------------
-with tab_practicar:
-    # Claves de session_state separadas por tema+nivel
-    key_ejercicio = f"ej_{tema_id}_{nivel}"
-    key_fase      = f"fase_{tema_id}_{nivel}"
-    key_ultimo_ok = f"ok_{tema_id}_{nivel}"
-    key_contador  = f"n_{tema_id}_{nivel}"
-
-    if key_ejercicio not in st.session_state:
-        st.session_state[key_ejercicio] = modulo.generar(nivel)
-        st.session_state[key_fase] = "asking"
-        st.session_state[key_ultimo_ok] = None
-        st.session_state[key_contador] = 0
-
-    def _nuevo_ejercicio():
-        st.session_state[key_ejercicio] = modulo.generar(nivel)
-        st.session_state[key_fase] = "asking"
-        st.session_state[key_ultimo_ok] = None
-        st.session_state[key_contador] += 1
-
-    ejercicio = st.session_state[key_ejercicio]
-    fase = st.session_state[key_fase]
-
-    if fase == "asking":
-        ui.mostrar_ejercicio(ejercicio)
-
-        input_key = f"input_{tema_id}_{nivel}_{st.session_state[key_contador]}"
-        respuesta_str = st.text_input(
-            "Tu respuesta:",
-            key=input_key,
-            placeholder="Ej: -8   ó   7/4   ó   0.75",
-        )
-
-        col1, col2 = st.columns(2)
-        with col1:
-            verificar = st.button(
-                "✅ Verificar", type="primary", use_container_width=True
-            )
-        with col2:
-            saltar = st.button("⏭️ Saltar", use_container_width=True)
-
-        if verificar:
-            if not respuesta_str.strip():
-                st.warning("Escribe una respuesta antes de verificar.")
-            else:
-                try:
-                    tipo = ejercicio["answer_type"]
-                    if tipo == "int":
-                        respuesta = int(respuesta_str.strip().replace(",", "."))
-                    elif tipo == "frac":
-                        respuesta = Fraction(respuesta_str.strip())
-                    else:
-                        respuesta = respuesta_str.strip()
-
-                    correcto = (respuesta == ejercicio["answer"])
-
-                    # Persistimos el evento en el estado global (JSON)
-                    S.registrar_evento(tema_id, correcto)
-
-                    st.session_state[key_ultimo_ok] = correcto
-                    st.session_state[key_fase] = "feedback"
-                    st.rerun()
-
-                except (ValueError, ZeroDivisionError):
-                    st.error(
-                        "No pude interpretar tu respuesta. "
-                        "Usa un entero (ej. `-8`) o fracción (ej. `7/4`)."
-                    )
-
-        if saltar:
-            _nuevo_ejercicio()
-            st.rerun()
-
-    else:  # fase == "feedback"
-        correcto = st.session_state[key_ultimo_ok]
-        ui.mostrar_ejercicio(ejercicio)
-        ui.mostrar_feedback(correcto, ejercicio)
-
-        if st.button(
-            "⏭️ Siguiente ejercicio",
-            type="primary",
-            use_container_width=True,
-        ):
-            _nuevo_ejercicio()
-            st.rerun()
-
-    st.divider()
-    ui.mostrar_metricas(tema_id)
-
-
-# --- TAB 3: Métricas ---------------------------------------------------
-with tab_metricas:
-    st.subheader("📊 Tu progreso")
-    ui.mostrar_metricas(tema_id)
-
-    st.divider()
-    with st.expander("⚙️ Opciones avanzadas"):
-        st.caption(
-            "El progreso se guarda en `data/student_state.json` "
-            "y se conserva entre sesiones."
-        )
-        if st.button("🗑️ Reiniciar TODO mi progreso"):
-            S.reiniciar()
-            st.success("Progreso borrado. Recargando…")
-            st.rerun()
