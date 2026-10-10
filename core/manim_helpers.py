@@ -1,20 +1,13 @@
 """
 core/manim_helpers.py — Reusable Manim scene templates.
 
-Each helper returns a tuple (scene_code: str, scene_class: str)
-that can be passed directly to manim_runner.render_manim_scene().
-
-The templates are self-contained strings. They do NOT import from
-this module — everything the scene needs is inlined so the subprocess
-can run them in isolation.
+No LaTeX required. Uses Text instead of MathTex, and
+number lines without auto-numbering (numbers drawn as Text).
 """
 
 
-# ---------------------------------------------------------------------------
-# Helper 1: Number line with a marker
-# ---------------------------------------------------------------------------
 def number_line_scene(value: int, min_val: int = -10, max_val: int = 10) -> tuple[str, str]:
-    """Animate a number line with a dot moving to `value`."""
+    """Number line with a moving dot pointing at `value` (no LaTeX)."""
     scene_class = "NumberLineDemo"
     code = f'''
 from manim import *
@@ -24,33 +17,37 @@ class {scene_class}(Scene):
         nl = NumberLine(
             x_range=[{min_val}, {max_val}, 1],
             length=10,
-            include_numbers=True,
-            label_direction=DOWN,
-            font_size=24,
+            include_numbers=False,
+            include_ticks=True,
         )
         self.add(nl)
 
+        # Manually add tick labels with Text (no LaTeX)
+        for i in range({min_val}, {max_val} + 1):
+            if i % 5 == 0:
+                label = Text(str(i), font_size=20)
+                label.next_to(nl.number_to_point(i), DOWN, buff=0.2)
+                self.add(label)
+
         dot = Dot(color=YELLOW).scale(1.3)
-        self.play(Create(dot))
+        self.add(dot)
         self.wait(0.3)
 
         target_point = nl.number_to_point({value})
         self.play(dot.animate.move_to(target_point), run_time=1.5)
         self.wait(0.5)
 
-        label = MathTex(r"{value}").next_to(dot, UP, buff=0.3).set_color(YELLOW)
+        label = Text(str({value}), font_size=36, color=YELLOW)
+        label.next_to(dot, UP, buff=0.3)
         self.play(Write(label))
         self.wait(1)
 '''
     return code, scene_class
 
 
-# ---------------------------------------------------------------------------
-# Helper 2: Two numbers on a number line (for sum/difference)
-# ---------------------------------------------------------------------------
 def two_numbers_scene(a: int, b: int, result: int,
                       min_val: int = -15, max_val: int = 15) -> tuple[str, str]:
-    """Show a and b on a number line, then the result."""
+    """Two numbers on a number line, then the result."""
     scene_class = "TwoNumbersDemo"
     code = f'''
 from manim import *
@@ -61,30 +58,32 @@ class {scene_class}(Scene):
             x_range=[{min_val}, {max_val}, 1],
             length=12,
             include_numbers=False,
-            font_size=20,
+            include_ticks=True,
         )
         self.add(nl)
+
+        for i in range({min_val}, {max_val} + 1):
+            if i % 5 == 0:
+                label = Text(str(i), font_size=18)
+                label.next_to(nl.number_to_point(i), DOWN, buff=0.2)
+                self.add(label)
 
         dot_a = Dot(color=BLUE).scale(1.2)
         dot_b = Dot(color=RED).scale(1.2)
         dot_r = Dot(color=GREEN).scale(1.5)
 
-        self.play(
-            dot_a.animate.move_to(nl.number_to_point({a})),
-            run_time=1,
-        )
-        self.play(
-            dot_b.animate.move_to(nl.number_to_point({b})),
-            run_time=1,
-        )
+        dot_a.move_to(nl.number_to_point({a}))
+        dot_b.move_to(nl.number_to_point({b}))
+        dot_r.move_to(nl.number_to_point(0))
+
+        self.play(FadeIn(dot_a), FadeIn(dot_b), run_time=0.8)
         self.wait(0.3)
 
-        label_a = MathTex(r"{a}").next_to(dot_a, UP, buff=0.3).set_color(BLUE)
-        label_b = MathTex(r"{b}").next_to(dot_b, UP, buff=0.3).set_color(RED)
+        label_a = Text(str({a}), font_size=28, color=BLUE).next_to(dot_a, UP, buff=0.3)
+        label_b = Text(str({b}), font_size=28, color=RED).next_to(dot_b, UP, buff=0.3)
         self.play(Write(label_a), Write(label_b))
         self.wait(0.5)
 
-        # Arrow from a to result (skip if a == result)
         if {a} != {result}:
             arrow = Arrow(
                 start=nl.number_to_point({a}),
@@ -99,18 +98,16 @@ class {scene_class}(Scene):
             dot_r.animate.move_to(nl.number_to_point({result})),
             run_time=1,
         )
-        label_r = MathTex(r"= {result}").next_to(dot_r, DOWN, buff=0.3).set_color(GREEN)
+        label_r = Text("= " + str({result}), font_size=32, color=GREEN)
+        label_r.next_to(dot_r, DOWN, buff=0.3)
         self.play(Write(label_r))
         self.wait(1.5)
 '''
     return code, scene_class
 
 
-# ---------------------------------------------------------------------------
-# Helper 3: Fraction bar visualization
-# ---------------------------------------------------------------------------
 def fraction_bar_scene(numerator: int, denominator: int) -> tuple[str, str]:
-    """Draw a bar split into `denominator` parts, with `numerator` filled."""
+    """Bar split into `denominator` parts, `numerator` filled."""
     scene_class = "FractionBarDemo"
     code = f'''
 from manim import *
@@ -120,14 +117,12 @@ class {scene_class}(Scene):
         n = {numerator}
         d = {denominator}
 
-        # Create a row of rectangles
         parts = VGroup()
         for i in range(d):
             rect = Rectangle(width=1.0, height=0.8, stroke_width=3, color=WHITE)
             parts.add(rect)
         parts.arrange(RIGHT, buff=0)
 
-        # Fill the first n parts
         fills = VGroup()
         for i in range(d):
             if i < n:
@@ -150,7 +145,7 @@ class {scene_class}(Scene):
         self.play(FadeIn(fills))
         self.wait(0.5)
 
-        frac = MathTex(r"\\frac{{{n}}}{{{d}}}").scale(2).next_to(parts, DOWN, buff=0.8)
+        frac = Text(str(n) + "/" + str(d), font_size=48).next_to(parts, DOWN, buff=0.8)
         self.play(Write(frac))
         self.wait(1.5)
 '''
