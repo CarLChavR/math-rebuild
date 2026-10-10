@@ -18,6 +18,7 @@ import streamlit as st
 
 from core import state as S
 from core import ui
+from core import manim_helpers as MH
 from core.registry import listar, buscar, cargar_modulo
 from manim_runner import render_manim_scene
 
@@ -113,11 +114,28 @@ with tab_teoria:
     bloques = modulo.teoria(nivel)
     if not bloques:
         st.info("Aún no hay teoría para este nivel.")
-    for b in bloques:
+
+    for idx, b in enumerate(bloques):
         st.markdown(f"#### {b['titulo']}")
         st.markdown(b["texto"])
         if "latex" in b:
             st.latex(b["latex"])
+
+        # --- Botón de animación (opcional por bloque) ---
+        anim_key = f"anim_teoria_{tema_id}_{nivel}_{idx}"
+        if st.button("🎬 Ver animación", key=f"btn_{anim_key}"):
+            with st.spinner("Renderizando animación… (30–60 s)"):
+                code, cls = MH.number_line_scene(value=-3)
+                video_bytes = render_manim_scene(code, cls)
+
+            if video_bytes:
+                st.session_state[anim_key] = video_bytes
+            else:
+                st.error("No se pudo renderizar la animación. Revisa los logs.")
+
+        if anim_key in st.session_state:
+            st.video(st.session_state[anim_key])
+
         st.divider()
 
 
