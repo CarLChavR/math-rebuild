@@ -4,9 +4,6 @@ core/state.py — Persistencia del progreso del estudiante.
 Backend conmutable:
   - MongoDB Atlas si hay URI en .streamlit/secrets.toml (o st.secrets)
   - Archivo JSON local como fallback (data/student_state.json)
-
-La API publica (cargar, guardar, registrar_evento, reiniciar, resumen)
-es identica sin importar el backend.
 """
 
 import json
@@ -19,21 +16,17 @@ DATA_DIR = RAIZ / "data"
 DATA_DIR.mkdir(exist_ok=True)
 STATE_FILE = DATA_DIR / "student_state.json"
 
-# ID del documento unico en Mongo (toda la app usa un solo doc)
 MONGO_DOC_ID = "main"
 
-# Estados de dominio (Master Prompt v9.0)
 NO_EVALUADO    = "no_evaluado"
 NO_DOMINADO    = "no_dominado"
 EN_DESARROLLO  = "en_desarrollo"
 FUNCIONAL      = "funcional"
 DOMINADO       = "dominado"
 
-# Umbrales
 RACHA_FUNCIONAL = 3
 RACHA_DOMINADO  = 5
 
-# Plantilla base
 _ESTADO_INICIAL = {
     "version": "1.0",
     "ultimo_update": None,
@@ -43,32 +36,35 @@ _ESTADO_INICIAL = {
 
 
 # --- Deteccion de backend ----------------------------------------------
-def _leer_uri_mongo():
-    """
-    Devuelve la URI de Mongo si esta configurada, si no None.
-    Orden:
-      1. Archivo .streamlit/secrets.toml (local / scripts)
-      2. st.secrets (Streamlit Cloud)
-    """
-    # Intento 1: archivo local
+def _leer_mongo_config():
+    """Devuelve dict con uri/db_name/collection_name, o None si no hay."""
+    # Intento 1: archivo local .streamlit/secrets.toml
     secrets_path = RAIZ / ".streamlit" / "secrets.toml"
     if secrets_path.exists():
         try:
             import tomllib
             with open(secrets_path, "rb") as f:
                 data = tomllib.load(f)
-            uri = data.get("mongo", {}).get("uri")
-            if uri:
-                return uri
+            m = data.get("mongo", {})
+            if m.get("uri"):
+                return {
+                    "uri": m["uri"],
+                    "db_name": m.get("db_name", "math_rebuild"),
+                    "collection_name": m.get("collection_name", "student_state"),
+                }
         except Exception:
             pass
 
-    # Intento 2: st.secrets (nube)
+    # Intento 2: st.secrets (Streamlit Cloud)
     try:
         import streamlit as st
-        uri = st.secrets.get("mongo", {}).get("uri")
-        if uri:
-            return uri
+        m = st.secrets.get("mongo", {})
+        if m.get("uri"):
+            return {
+                "uri": m["uri"],
+                "db_name": m.get("db_name", "math_rebuild"),
+                "collection_name": m.get("collection_name", "student_state"),
+            }
     except Exception:
         pass
 
@@ -78,42 +74,43 @@ def _leer_uri_mongo():
 # --- Backend Mongo -----------------------------------------------------
 _mongo_client = None
 _mongo_db = None
+_mongo_coll_name = None
 
 
-def _mongo_init(uri):
-    """Inicializa el cliente Mongo una sola vez."""
-    global _mongo_client, _mongo_db
+def _mongo_init(cfg):
+    global _mongo_client, _mongo_db, _mongo_coll_name
     if _mongo_client is None:
         from pymongo import MongoClient
-        _mongo_client = MongoClient(uri, serverSelectionTimeoutMS=10000)
-        _mongo_db = _mongo_client["math_rebuild"]
-    return _mongo_db
+        _mongo_client = MongoClient(cfg["uri"], serverSelectionTimeoutMS=10000)
+        _mongo_db = _mongo_client[cfg["db_name"]]
+        _mongo_coll_name = cfg["collection_name"]
+    return _mongo_db[_mongo_coll_name]
 
 
-def _mongo_cargar(uri):
-    db = _mongo_init(uri)
-    doc = db["student_state"].find_one({"_id": MONGO_DOC_ID}, {"_id": 0})
+def _mongo_cargar(cfg):
+    coll = _mongo_init(cfg)
+    doc = coll.find_one({"_id": MONGO_DOC_ID}, {"_id": 0})
     if doc is None:
         return json.loads(json.dumps(_ESTADO_INICIAL))
     return doc
 
 
-def _mongo_guardar(uri, estado):
-    db = _mongo_init(uri)
+def _mongo_guardar(cfg, estado):
+    coll = _mongo_init(cfg)
     estado = {k: v for k, v in estado.items() if k != "_id"}
-    db["student_state"].update_one(
+    coll.update_one(
         {"_id": MONGO_DOC_ID},
         {"$set": estado},
         upsert=True,
     )
 
 
-def _mongo_reiniciar(uri):
-    db = _mongo_init(uri)
-    db["student_state"].delete_one({"_id": MONGO_DOC_ID})
+def _mongo_reiniciar(cfg):
+    coll = _mongo_init(cfg)
+    coll.delete_one({"_id": MONGO_DOC_ID})
 
 
-# --- Backend JSON (fallback) -------------------------------------------
+# --- Backend JSON ------------------------------------------------------
 def _json_cargar():
     if not STATE_FILE.exists():
         return json.loads(json.dumps(_ESTADO_INICIAL))
@@ -130,27 +127,26 @@ def _json_guardar(estado):
         json.dump(estado, f, ensure_ascii=False, indent=2)
 
 
-# --- API publica (identica sin importar el backend) --------------------
+# --- API publica -------------------------------------------------------
 def backend_activo():
-    """Devuelve 'mongo' o 'json'. Util para mostrar en la UI."""
-    return "mongo" if _leer_uri_mongo() else "json"
+    return "mongo" if _leer_mongo_config() else "json"
 
 
 def cargar():
-    uri = _leer_uri_mongo()
-    if uri:
+    cfg = _leer_mongo_config()
+    if cfg:
         try:
-            return _mongo_cargar(uri)
+            return _mongo_cargar(cfg)
         except Exception as e:
             print(f"[state] Mongo fallo, usando JSON: {e}")
     return _json_cargar()
 
 
 def guardar(estado):
-    uri = _leer_uri_mongo()
-    if uri:
+    cfg = _leer_mongo_config()
+    if cfg:
         try:
-            _mongo_guardar(uri, estado)
+            _mongo_guardar(cfg, estado)
             return
         except Exception as e:
             print(f"[state] Mongo fallo al guardar, usando JSON: {e}")
@@ -158,7 +154,6 @@ def guardar(estado):
 
 
 def registrar_evento(habilidad, correcto):
-    """Registra un intento y devuelve la entrada actualizada de esa habilidad."""
     estado = cargar()
     hab = estado["habilidades"].setdefault(habilidad, {
         "estado": NO_EVALUADO,
@@ -174,7 +169,6 @@ def registrar_evento(habilidad, correcto):
     else:
         hab["racha"] = 0
 
-    # Recalcular estado
     if hab["racha"] >= RACHA_DOMINADO:
         hab["estado"] = DOMINADO
     elif hab["racha"] >= RACHA_FUNCIONAL:
@@ -184,7 +178,6 @@ def registrar_evento(habilidad, correcto):
     else:
         hab["estado"] = NO_EVALUADO
 
-    # Historial
     estado["historial"].append({
         "ts": datetime.now().isoformat(timespec="seconds"),
         "habilidad": habilidad,
@@ -197,11 +190,10 @@ def registrar_evento(habilidad, correcto):
 
 
 def reiniciar():
-    """Borra todo el progreso (util para depurar o empezar de cero)."""
-    uri = _leer_uri_mongo()
-    if uri:
+    cfg = _leer_mongo_config()
+    if cfg:
         try:
-            _mongo_reiniciar(uri)
+            _mongo_reiniciar(cfg)
             return
         except Exception as e:
             print(f"[state] Mongo fallo al reiniciar, usando JSON: {e}")
@@ -209,7 +201,6 @@ def reiniciar():
 
 
 def resumen():
-    """Devuelve lista de habilidades con su estado, ordenada por nombre."""
     estado = cargar()
     return [
         {"habilidad": k, **v}
