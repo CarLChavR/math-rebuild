@@ -19,6 +19,7 @@ import streamlit as st
 from core import state as S
 from core import ui
 from core.registry import listar, buscar, cargar_modulo
+from manim_runner import render_manim_scene
 
 
 # --- Configuración de página (debe ir primero) -------------------------
@@ -76,6 +77,28 @@ st.sidebar.caption(
     f"Fase: **{tema_meta.fase}**  \n"
     f"Módulo: `{tema_meta.modulo}`"
 )
+
+# --- Test Manim (temporal, para validar el pipeline) -------------------
+with st.sidebar.expander("🧪 Test Manim"):
+    if st.button("Render demo (Square → Circle)"):
+        with st.spinner("Renderizando… puede tardar 30–60 s"):
+            demo_code = '''
+from manim import *
+
+class Demo(Scene):
+    def construct(self):
+        sq = Square()
+        ci = Circle().set_fill(PINK, opacity=0.5)
+        self.play(Create(sq))
+        self.play(Transform(sq, ci))
+        self.wait(0.5)
+'''
+            video_bytes = render_manim_scene(demo_code, "Demo")
+            if video_bytes:
+                st.success("¡Listo!")
+                st.video(video_bytes)
+            else:
+                st.error("Manim falló. Revisa los logs de Streamlit.")
 
 
 # --- Pestañas ----------------------------------------------------------
